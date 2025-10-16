@@ -600,6 +600,34 @@ app: "{{ template "harbor.name" . }}"
   {{- end }}
 {{- end -}}
 
+{{- define "harbor.initAdminPassword" -}}
+  {{- if not .harborAdminPassword }}
+    {{- $coreSecretName := include "harbor.core" . }}
+    {{- $existingCoreSecret := lookup "v1" "Secret" .Release.Namespace $coreSecretName }}
+    {{- $password := include "harbor.secretKeyHelper" (dict "key" "HARBOR_ADMIN_PASSWORD" "data" $existingCoreSecret.data) }}
+    {{- if not $password }}
+      {{- $password = default (randAlphaNum 16) .Values.harborAdminPassword }}
+    {{- end }}
+    {{- $_ := set . "harborAdminPassword" $password }}
+  {{- end }}
+{{- end -}}
+
+{{ include "harbor.initRegistryPassword" . }}
+
+{{- define "harbor.initRegistryPassword" -}}
+  {{- if not .registryPassword }}
+    {{- $coreSecretName := include "harbor.core" . }}
+    {{- $existingCoreSecret := lookup "v1" "Secret" .Release.Namespace $coreSecretName }}
+    {{- $password := include "harbor.secretKeyHelper" (dict "key" "REGISTRY_CREDENTIAL_PASSWORD" "data" $existingCoreSecret.data) }}
+    {{- if not $password }}
+      {{- $password = default (randAlphaNum 32) .Values.registry.credentials.password }}
+    {{- end }}
+    {{- $_ := set . "registryPassword" $password }}
+  {{- end }}
+{{- end -}}
+
+{{ include "harbor.initRegistryPassword" . }}
+
 {{/* Allow KubeVersion to be overridden. */}}
 {{- define "harbor.ingress.kubeVersion" -}}
   {{- default .Capabilities.KubeVersion.Version .Values.expose.ingress.kubeVersionOverride -}}
