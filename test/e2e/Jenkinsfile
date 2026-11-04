@@ -8,6 +8,7 @@ class HarborChartFreshInstallPipelineExecutor extends FreshInstallPipelineExecut
     String coreHostname
     String ingressControllerServiceType
     String ingressControllerIP
+    String adminPassword
 
     HarborChartFreshInstallPipelineExecutor(Script script) {
        this.script = script
@@ -84,6 +85,38 @@ class HarborChartFreshInstallPipelineExecutor extends FreshInstallPipelineExecut
                     docker run -i --rm -v /root/.kube/config:/root/.kube/config -v /root/.aws:/root/.aws:ro deployer:dev \
                         sh -c 'kubectl get svc ingress-nginx-controller --context ${context} -n ingress-nginx -o jsonpath="{.spec.externalIPs[0]}"'
                 """).trim()
+            // get the IP address of the ingress controller
+            if (ingressControllerServiceType == 'LoadBalancer') {
+                ingressControllerIP = script.sh(
+                    returnStdout: true,
+                    script: """
+                        docker run -i --rm -v \${KUBE_CONFIG_FILE_PATH}:/root/.kube/config deployer:dev \
+                            sh -c 'host \$(kubectl get svc ingress-nginx-controller --context ${context} -n ingress-nginx -o jsonpath="{.status.loadBalancer.ingress[0].hostname}") | awk "/has address/ { print \\\$4; exit }"'
+                    """).trim()
+            } else if (ingressControllerServiceType == 'NodePort') {
+                ingressControllerIP = script.sh(
+                    returnStdout: true,
+                    script: """
+                        docker run -i --rm -v \${KUBE_CONFIG_FILE_PATH}:/root/.kube/config deployer:dev \
+                            sh -c 'kubectl get svc ingress-nginx-controller --context ${context} -n ingress-nginx -o jsonpath="{.spec.externalIPs[0]}"'
+                    """).trim()
+            }
+            // install harbor chart
+            script.sh """
+                # insert the hostAliases to run the replication test
+                sed -i -r "s|    spec:|    spec:\\n      hostAliases:\\n      - ip: ${ingressControllerIP}\\n        hostnames:\\n        - ${coreHostname}|g" ./templates/core/core-dpl.yaml
+                # install harbor chart
+                docker run -i --rm -w /workspace -v \${KUBE_CONFIG_FILE_PATH}:/root/.kube/config -v \$(pwd):/workspace deployer:dev \
+                    helm install harbor --kube-context ${context} -n ${namespace} --create-namespace \
+                        --set "expose.ingress.hosts.core=${coreHostname},externalURL=https://${coreHostname},internalTLS.enabled=true,imagePullPolicy=Always,trivy.skipUpdate=true,core.gcTimeWindowHours=0" .
+            """
+            // get the admin password from the secret
+            adminPassword = script.sh(
+                returnStdout: true,
+                script: """
+                    docker run -i --rm -v \${KUBE_CONFIG_FILE_PATH}:/root/.kube/config deployer:dev \
+                        sh -c 'kubectl get secret harbor-core --context ${context} -n ${namespace} -o jsonpath="{.data.HARBOR_ADMIN_PASSWORD}" | base64 --decode'
+                """).trim()
         }
         // install harbor chart
         script.sh """
@@ -97,7 +130,7 @@ class HarborChartFreshInstallPipelineExecutor extends FreshInstallPipelineExecut
 
         HarborInstance instance = new HarborInstance()
         instance.coreServiceURL = "https://" + coreHostname
-        instance.adminPassword = "Harbor12345"
+        instance.adminPassword = adminPassword
         instance.authMode = "database"
         instance.components = "trivy"
         instance.hostIPMappings = "${coreHostname}:${ingressControllerIP}"

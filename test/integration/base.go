@@ -28,7 +28,7 @@ func init() {
 
 var (
 	client = &http.Client{
-		Timeout: 30*time.Second,
+		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
@@ -61,13 +61,15 @@ func NewBaseTestSuite(values map[string]string) BaseTestSuite {
 
 type BaseTestSuite struct {
 	suite.Suite
-	Options     *helm.Options
-	ReleaseName string
-	URL         string // the external URL of Harbor
+	Options       *helm.Options
+	ReleaseName   string
+	URL           string // the external URL of Harbor
+	AdminPassword string
 }
 
 func (b *BaseTestSuite) SetupSuite() {
 	helm.Install(b.T(), b.Options, "../..", b.ReleaseName)
+	b.readAdminPassword()
 	b.waitUntilHealthy(b.URL)
 }
 
@@ -118,6 +120,14 @@ func (b *BaseTestSuite) waitUntilHealthy(url string) {
 	}
 }
 
+func (b *BaseTestSuite) readAdminPassword() {
+	secret, err := k8s.GetSecretE(b.T(), b.Options.KubectlOptions, fmt.Sprintf("%s-core", b.ReleaseName))
+	if err != nil {
+		b.FailNow(fmt.Sprintf("failed to get admin password secret: %v", err))
+	}
+	b.AdminPassword = string(secret.Data["HARBOR_ADMIN_PASSWORD"])
+}
+
 func healthy(url string) error {
 	resp, err := client.Get(fmt.Sprintf("%s/api/v2.0/health", url))
 	if err != nil {
@@ -156,8 +166,8 @@ func (b *BaseTestSuite) TestPush() {
 
 	// push image
 	log.Print("pushing the image...")
-	cmdStr := fmt.Sprintf("docker pull hello-world:latest;docker tag hello-world:latest %s/library/hello-world:latest; docker login %s -u admin -p Harbor12345;docker push %s/library/hello-world:latest",
-		addr, addr, addr)
+	cmdStr := fmt.Sprintf("docker pull hello-world:latest;docker tag hello-world:latest %s/library/hello-world:latest; docker login %s -u admin -p %s;docker push %s/library/hello-world:latest",
+		addr, addr, b.AdminPassword, addr)
 	cmd := exec.Command("/bin/sh", "-c", cmdStr)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
