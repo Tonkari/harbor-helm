@@ -75,6 +75,14 @@ spec:
       - name: registry
         image: {{ .Values.registry.registry.image.repository }}:{{ .Values.registry.registry.image.tag }}
         imagePullPolicy: {{ .Values.imagePullPolicy }}
+        {{- with .Values.registry.registry.command }}
+        command:
+          {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- with .Values.registry.registry.args }}
+        args:
+          {{- toYaml . | nindent 12 }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /
